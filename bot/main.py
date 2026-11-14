@@ -77,7 +77,6 @@ async def run_webhook(
     async def on_shutdown(app: web.Application) -> None:
         logger.info("Shutting down webhook services...")
         scheduler.shutdown(wait=False)
-        await bot.delete_webhook()
         await close_db()
         await bot.session.close()
         logger.info("Webhook shutdown completed cleanly.")
