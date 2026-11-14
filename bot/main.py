@@ -33,6 +33,22 @@ logging.basicConfig(
 logger = logging.getLogger("clash_rack_bot")
 
 
+async def start_healthcheck_server(port: int):
+    """Run lightweight HTTP healthcheck endpoint for cloud PaaS (Render, Koyeb, Railway)."""
+    from aiohttp import web
+    app = web.Application()
+    async def health(request):
+        return web.Response(text="OK - Clash Rack Rental Bot is running!", status=200)
+    app.router.add_get("/", health)
+    app.router.add_get("/health", health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info("Healthcheck HTTP server listening on 0.0.0.0:%d", port)
+    return runner
+
+
 async def set_bot_commands(bot: Bot) -> None:
     """Register menu commands with Telegram API."""
     commands = [
@@ -82,7 +98,13 @@ async def main() -> None:
     # 6. Set Commands
     await set_bot_commands(bot)
 
-    # 7. Start Polling
+    # 7. Start Healthcheck Web Server if PORT is assigned by cloud host
+    web_runner = None
+    port_env = os.environ.get("PORT")
+    if port_env and port_env.isdigit():
+        web_runner = await start_healthcheck_server(int(port_env))
+
+    # 8. Start Polling
     logger.info("Bot is now listening for Telegram updates...")
     try:
         # Discard old pending messages on boot
@@ -92,6 +114,8 @@ async def main() -> None:
         logger.error("Fatal error during polling: %s", exc, exc_info=True)
     finally:
         logger.info("Shutting down bot services...")
+        if web_runner:
+            await web_runner.cleanup()
         scheduler.shutdown(wait=False)
         await close_db()
         await bot.session.close()
