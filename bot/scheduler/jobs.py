@@ -66,7 +66,7 @@ async def job_send_rental_reminders(bot: Bot) -> None:
 
 
 async def job_keep_alive_ping(bot: Bot) -> None:
-    """Self-ping healthcheck endpoint to keep Render Free instance warm and prevent spindown."""
+    """Self-ping healthcheck endpoint to keep Render Free instance warm and prevent spindown, plus self-healing webhook."""
     render_url = (
         os.environ.get("RENDER_EXTERNAL_URL")
         or os.environ.get("WEBHOOK_URL")
@@ -80,6 +80,24 @@ async def job_keep_alive_ping(bot: Bot) -> None:
                     logger.debug("Keep-alive self-ping to %s status: %d", health_url, resp.status)
         except Exception as exc:
             logger.debug("Keep-alive ping failed: %s", exc)
+
+        # Self-healing webhook: auto-restore webhook if dropped
+        try:
+            expected_url = f"{render_url.rstrip('/')}/webhook"
+            wh_info = await bot.get_webhook_info()
+            if wh_info.url != expected_url:
+                logger.warning(
+                    "Self-healing webhook triggered! URL was '%s', restoring to '%s'",
+                    wh_info.url,
+                    expected_url
+                )
+                await bot.set_webhook(
+                    url=expected_url,
+                    drop_pending_updates=False,
+                    allowed_updates=["message", "callback_query"]
+                )
+        except Exception as exc:
+            logger.warning("Failed self-healing webhook verification: %s", exc)
 
 
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
