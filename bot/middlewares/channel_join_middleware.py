@@ -30,15 +30,38 @@ class ChannelJoinMiddleware(BaseMiddleware):
         session = data.get("session")
         bot: Bot = data.get("bot")
 
-        user_id = None
-        if isinstance(event, Message) and event.from_user:
-            user_id = event.from_user.id
-            # Allow /start without blocking so initial greeting / check button can be displayed
-        elif isinstance(event, CallbackQuery) and event.from_user:
-            user_id = event.from_user.id
-            # Allow the check button callback
-            if event.data == "check_membership":
-                return await handler(event, data)
+        event_user = data.get("event_from_user")
+        user_id = event_user.id if event_user else None
+
+        if not user_id:
+            if isinstance(event, Message) and event.from_user:
+                user_id = event.from_user.id
+            elif isinstance(event, CallbackQuery) and event.from_user:
+                user_id = event.from_user.id
+            elif hasattr(event, "message") and event.message and event.message.from_user:
+                user_id = event.message.from_user.id
+            elif hasattr(event, "callback_query") and event.callback_query and event.callback_query.from_user:
+                user_id = event.callback_query.from_user.id
+
+        # Allow /start message without blocking so greeting and main menu can be displayed
+        msg_text = None
+        if isinstance(event, Message) and event.text:
+            msg_text = event.text
+        elif hasattr(event, "message") and event.message and event.message.text:
+            msg_text = event.message.text
+
+        if msg_text and msg_text.startswith("/start"):
+            return await handler(event, data)
+
+        # Allow check_membership callback
+        cb_data = None
+        if isinstance(event, CallbackQuery) and event.data:
+            cb_data = event.data
+        elif hasattr(event, "callback_query") and event.callback_query and event.callback_query.data:
+            cb_data = event.callback_query.data
+
+        if cb_data == "check_membership":
+            return await handler(event, data)
 
         if not user_id or not session or not bot:
             return await handler(event, data)

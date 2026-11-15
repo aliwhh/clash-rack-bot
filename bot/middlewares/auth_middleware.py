@@ -20,12 +20,17 @@ class AuthMiddleware(BaseMiddleware):
         data: Dict[str, Any],
     ) -> Any:
         session = data.get("session")
-        telegram_user = None
+        telegram_user = data.get("event_from_user")
 
-        if isinstance(event, Message):
-            telegram_user = event.from_user
-        elif isinstance(event, CallbackQuery):
-            telegram_user = event.from_user
+        if not telegram_user:
+            if isinstance(event, Message):
+                telegram_user = event.from_user
+            elif isinstance(event, CallbackQuery):
+                telegram_user = event.from_user
+            elif hasattr(event, "message") and event.message:
+                telegram_user = event.message.from_user
+            elif hasattr(event, "callback_query") and event.callback_query:
+                telegram_user = event.callback_query.from_user
 
         if telegram_user and session:
             user, _ = await UserService.get_or_create_user(
@@ -43,6 +48,8 @@ class AuthMiddleware(BaseMiddleware):
                     await event.answer(block_msg)
                 elif isinstance(event, CallbackQuery):
                     await event.answer(block_msg, show_alert=True)
+                elif hasattr(event, "message") and event.message:
+                    await event.message.answer(block_msg)
                 return
 
         return await handler(event, data)

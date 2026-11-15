@@ -18,12 +18,18 @@ class MaintenanceMiddleware(BaseMiddleware):
         data: Dict[str, Any],
     ) -> Any:
         session = data.get("session")
-        user_id = None
+        event_user = data.get("event_from_user")
+        user_id = event_user.id if event_user else None
 
-        if isinstance(event, Message) and event.from_user:
-            user_id = event.from_user.id
-        elif isinstance(event, CallbackQuery) and event.from_user:
-            user_id = event.from_user.id
+        if not user_id:
+            if isinstance(event, Message) and event.from_user:
+                user_id = event.from_user.id
+            elif isinstance(event, CallbackQuery) and event.from_user:
+                user_id = event.from_user.id
+            elif hasattr(event, "message") and event.message and event.message.from_user:
+                user_id = event.message.from_user.id
+            elif hasattr(event, "callback_query") and event.callback_query and event.callback_query.from_user:
+                user_id = event.callback_query.from_user.id
 
         # Admins always bypass maintenance mode
         if user_id and settings.is_admin(user_id):

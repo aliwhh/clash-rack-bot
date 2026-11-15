@@ -6,7 +6,7 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.database.models import (
@@ -31,70 +31,61 @@ router = Router(name="admin_dashboard_router")
 
 
 async def get_system_stats(session: AsyncSession) -> dict:
-    """Calculate live metrics and statistics across all database tables."""
+    """Calculate live metrics and statistics using fast aggregated SQL queries."""
     now_utc = datetime.now(timezone.utc)
     today_start = datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc)
 
-    # Users count
-    total_users = (await session.execute(select(func.count(User.id)))).scalar() or 0
-    today_users = (
-        await session.execute(select(func.count(User.id)).where(User.created_at >= today_start))
-    ).scalar() or 0
+    # 1. Users count (total + today)
+    q_users = await session.execute(
+        select(
+            func.count(User.id),
+            func.count(case((User.created_at >= today_start, User.id))),
+        )
+    )
+    total_users, today_users = q_users.one()
 
-    # Orders count
-    total_orders = (await session.execute(select(func.count(Order.id)))).scalar() or 0
-    pending_orders = (
-        await session.execute(
-            select(func.count(Order.id)).where(
-                Order.status.in_([OrderStatus.PENDING_APPROVAL, OrderStatus.PENDING_PAYMENT])
-            )
+    # 2. Orders count (total + pending + active)
+    q_orders = await session.execute(
+        select(
+            func.count(Order.id),
+            func.count(case((Order.status.in_([OrderStatus.PENDING_APPROVAL, OrderStatus.PENDING_PAYMENT]), Order.id))),
+            func.count(case((Order.status == OrderStatus.ACTIVE, Order.id))),
         )
-    ).scalar() or 0
-    active_orders = (
-        await session.execute(select(func.count(Order.id)).where(Order.status == OrderStatus.ACTIVE))
-    ).scalar() or 0
+    )
+    total_orders, pending_orders, active_orders = q_orders.one()
 
-    # Racks count
-    available_racks = (
-        await session.execute(
-            select(func.count(Rack.id)).where(
-                Rack.is_active.is_(True),
-                Rack.status == RackStatus.AVAILABLE
-            )
+    # 3. Available racks
+    q_racks = await session.execute(
+        select(
+            func.count(case((and_(Rack.is_active.is_(True), Rack.status == RackStatus.AVAILABLE), Rack.id))),
         )
-    ).scalar() or 0
+    )
+    (available_racks,) = q_racks.one()
 
-    # Revenue
-    total_rev = (
-        await session.execute(
-            select(func.sum(Payment.amount)).where(Payment.status == PaymentStatus.SUCCESSFUL)
+    # 4. Revenue (total + today)
+    q_rev = await session.execute(
+        select(
+            func.coalesce(func.sum(case((Payment.status == PaymentStatus.SUCCESSFUL, Payment.amount))), 0),
+            func.coalesce(func.sum(case((and_(Payment.status == PaymentStatus.SUCCESSFUL, Payment.created_at >= today_start), Payment.amount))), 0),
         )
-    ).scalar() or 0
-    today_rev = (
-        await session.execute(
-            select(func.sum(Payment.amount)).where(
-                Payment.status == PaymentStatus.SUCCESSFUL,
-                Payment.created_at >= today_start
-            )
-        )
-    ).scalar() or 0
+    )
+    total_rev, today_rev = q_rev.one()
 
-    # Tickets
-    open_tickets = (
-        await session.execute(
-            select(func.count(SupportTicket.id)).where(
-                SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
-            )
+    # 5. Open tickets
+    q_tickets = await session.execute(
+        select(func.count(SupportTicket.id)).where(
+            SupportTicket.status.in_([TicketStatus.OPEN, TicketStatus.IN_PROGRESS])
         )
-    ).scalar() or 0
+    )
+    open_tickets = q_tickets.scalar() or 0
 
     return {
-        "total_users": total_users,
-        "today_users": today_users,
-        "total_orders": total_orders,
-        "pending_orders": pending_orders,
-        "active_orders": active_orders,
-        "available_racks": available_racks,
+        "total_users": total_users or 0,
+        "today_users": today_users or 0,
+        "total_orders": total_orders or 0,
+        "pending_orders": pending_orders or 0,
+        "active_orders": active_orders or 0,
+        "available_racks": available_racks or 0,
         "total_rev": int(total_rev),
         "today_rev": int(today_rev),
         "open_tickets": open_tickets,

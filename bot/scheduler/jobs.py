@@ -1,6 +1,8 @@
 """Background periodic scheduled tasks using APScheduler."""
 
 import logging
+import os
+import aiohttp
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -63,6 +65,23 @@ async def job_send_rental_reminders(bot: Bot) -> None:
         logger.error("Error in job_send_rental_reminders: %s", exc, exc_info=True)
 
 
+async def job_keep_alive_ping(bot: Bot) -> None:
+    """Self-ping healthcheck endpoint to keep Render Free instance warm and prevent spindown."""
+    render_url = (
+        os.environ.get("RENDER_EXTERNAL_URL")
+        or os.environ.get("WEBHOOK_URL")
+        or "https://clash-rack-bot.onrender.com"
+    )
+    if render_url:
+        health_url = f"{render_url.rstrip('/')}/health"
+        try:
+            async with aiohttp.ClientSession() as client:
+                async with client.get(health_url, timeout=10) as resp:
+                    logger.debug("Keep-alive self-ping to %s status: %d", health_url, resp.status)
+        except Exception as exc:
+            logger.debug("Keep-alive ping failed: %s", exc)
+
+
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     """Initialize and configure background AsyncIOScheduler."""
     scheduler = AsyncIOScheduler(timezone="UTC")
@@ -94,6 +113,16 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         minutes=15,
         args=[bot],
         id="job_send_rental_reminders",
+        replace_existing=True,
+    )
+
+    # Keep alive self-ping every 10 minutes to prevent Render Free spindown
+    scheduler.add_job(
+        job_keep_alive_ping,
+        "interval",
+        minutes=10,
+        args=[bot],
+        id="job_keep_alive_ping",
         replace_existing=True,
     )
 

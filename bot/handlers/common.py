@@ -19,7 +19,7 @@ router = Router(name="common_router")
 
 
 @router.message(CommandStart())
-async def handle_start(message: Message, state: FSMContext, session: AsyncSession, user: User) -> None:
+async def handle_start(message: Message, state: FSMContext, session: AsyncSession) -> None:
     """Handle /start command, clear any active state, and display welcome screen."""
     await state.clear()
     is_admin = await UserService.is_admin(session, message.from_user.id)
